@@ -22,9 +22,7 @@
 
 name: Trader Notify
 
-# Node.js 24 を明示的に使用（Node.js 20 非推奨警告を解消）
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+# Node.js 24 を各ジョブレベルで指定（workflow levelでは効かないため）
 
 on:
   schedule:
@@ -63,6 +61,8 @@ jobs:
   saturday_predict:
     name: '📊 銘柄予測 (saturday)'
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
     if: |
       (github.event_name == 'schedule' && github.event.schedule == '30 22 * * 5') ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'saturday')
@@ -103,6 +103,8 @@ jobs:
   weekday_notify:
     name: '📈 日次変動 (weekday)'
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
     if: |
       (github.event_name == 'schedule' && github.event.schedule == '30 7 * * 1-4') ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'weekday')
@@ -139,6 +141,8 @@ jobs:
   friday_summary:
     name: '🏁 週次総括 (friday)'
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
     if: |
       (github.event_name == 'schedule' && github.event.schedule == '30 7 * * 5') ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'friday')
@@ -155,7 +159,8 @@ jobs:
       - name: 依存パッケージをインストール
         run: |
           pip install --upgrade pip
-          pip install yfinance pandas numpy joblib requests jpholiday
+          pip install tensorflow yfinance pandas numpy \
+                      scikit-learn joblib ta requests jpholiday
 
       - name: 週次総括を Discord に通知
         env:
@@ -181,6 +186,8 @@ jobs:
   monday_mode:
     name: '🔔 起点記録【手動】月曜祝日代替 (monday_mode)'
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
     if: |
       github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'monday_mode'
 
@@ -215,6 +222,8 @@ jobs:
   friday_mode:
     name: '🏁 週次総括【手動】金曜祝日代替 (friday_mode)'
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
     if: |
       github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'friday_mode'
 
@@ -230,7 +239,8 @@ jobs:
       - name: 依存パッケージをインストール
         run: |
           pip install --upgrade pip
-          pip install yfinance pandas numpy joblib requests jpholiday
+          pip install tensorflow yfinance pandas numpy \
+                      scikit-learn joblib ta requests jpholiday
 
       - name: 週次総括を Discord に通知（2重実行防止付き）
         env:
