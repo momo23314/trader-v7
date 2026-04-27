@@ -1,0 +1,226 @@
+# .github/workflows/trader_notify.yml
+#
+# ─── スケジュール一覧（JST = UTC+9）─────────────────────────────────
+#   土曜 07:30 JST (金 22:30 UTC)  → 銘柄予測 (saturday)
+#   月〜木 16:30 JST (07:30 UTC)   → 日次変動 (weekday) ※祝日は自動スキップ
+#   金曜 16:30 JST (07:30 UTC)     → 週次総括 (friday)  ※祝日は自動スキップ
+#
+# ─── 手動実行 (workflow_dispatch) ────────────────────────────────────
+#   monday_mode  月曜が祝日のとき翌営業日に手動実行 → 起点始値を記録
+#   friday_mode  金曜が祝日のとき前営業日に手動実行 → 週次総括（2重実行防止付き）
+#
+# ─── 必要な GitHub 設定 ──────────────────────────────────────────────
+#   Secrets:  DISCORD_WEBHOOK_URL
+#   Settings → Actions → General → Workflow permissions: Read and write ✅
+
+name: Trader Notify
+
+on:
+  schedule:
+    - cron: '30 22 * * 5'   # 土曜 07:30 JST (金曜 22:30 UTC)
+    - cron: '30 7 * * 1-4'  # 月〜木 16:30 JST (07:30 UTC)
+    - cron: '30 7 * * 5'    # 金曜 16:30 JST (07:30 UTC)
+
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: |
+          実行モードを選択
+            saturday    : 銘柄予測を通知（土曜スケジュール相当）
+            weekday     : 日次変動を通知（月〜木スケジュール相当）
+            friday      : 週次総括を通知（金曜スケジュール相当）
+            monday_mode : 【手動】月曜祝日の代替 — 今日の始値を起点として記録
+            friday_mode : 【手動】金曜祝日の代替 — 週次総括を今日実行（2重実行防止付き）
+        required: true
+        default: 'weekday'
+        type: choice
+        options:
+          - saturday
+          - weekday
+          - friday
+          - monday_mode
+          - friday_mode
+
+# ════════════════════════════════════════════════════════════════════
+# JOB 1: 土曜日 OR 手動 saturday
+# ════════════════════════════════════════════════════════════════════
+jobs:
+  saturday_predict:
+    name: '📊 銘柄予測 (saturday)'
+    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'schedule' && github.event.schedule == '30 22 * * 5') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'saturday')
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 依存パッケージをインストール
+        run: |
+          pip install --upgrade pip
+          pip install tensorflow==2.16.1 yfinance pandas numpy \
+                      scikit-learn joblib ta requests jpholiday
+
+      - name: morning_predict を実行
+        run: python robust_deep_trader_ai_v4r_5d.py morning --top_n 5
+
+      - name: Discord に予測結果を通知
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python notify_discord.py saturday
+
+      - name: 予測ファイルをコミット・プッシュ
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: '[bot] 土曜日: 予測結果を更新'
+          file_pattern: 'latest_predictions_5d.pkl'
+
+# ════════════════════════════════════════════════════════════════════
+# JOB 2: 月〜木スケジュール OR 手動 weekday
+# ════════════════════════════════════════════════════════════════════
+  weekday_notify:
+    name: '📈 日次変動 (weekday)'
+    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'schedule' && github.event.schedule == '30 7 * * 1-4') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'weekday')
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 依存パッケージをインストール
+        run: |
+          pip install --upgrade pip
+          pip install yfinance pandas numpy joblib requests jpholiday
+
+      - name: 日次変動を Discord に通知
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python notify_discord.py weekday
+
+      # 月曜日のときのみ monday_open_prices.json が更新される
+      - name: 起点価格ファイルをコミット・プッシュ
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: '[bot] 月〜木: 日次追跡データを更新'
+          file_pattern: 'monday_open_prices.json'
+
+# ════════════════════════════════════════════════════════════════════
+# JOB 3: 金曜スケジュール OR 手動 friday
+# ════════════════════════════════════════════════════════════════════
+  friday_summary:
+    name: '🏁 週次総括 (friday)'
+    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'schedule' && github.event.schedule == '30 7 * * 5') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'friday')
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 依存パッケージをインストール
+        run: |
+          pip install --upgrade pip
+          pip install yfinance pandas numpy joblib requests jpholiday
+
+      - name: 週次総括を Discord に通知
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python notify_discord.py friday
+
+      - name: 累計勝率ファイルをコミット・プッシュ
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: '[bot] 金曜日: 週次総括・累計勝率を更新'
+          file_pattern: 'cumulative_stats.json monday_open_prices.json'
+
+# ════════════════════════════════════════════════════════════════════
+# JOB 4: 手動 monday_mode（月曜祝日の代替実行）
+# ════════════════════════════════════════════════════════════════════
+  monday_mode:
+    name: '🔔 起点記録【手動】月曜祝日代替 (monday_mode)'
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'monday_mode'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 依存パッケージをインストール
+        run: |
+          pip install --upgrade pip
+          pip install yfinance pandas numpy joblib requests jpholiday
+
+      - name: 週の起点始値を記録して Discord に通知
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python notify_discord.py monday_mode
+
+      - name: 起点価格ファイルをコミット・プッシュ
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: '[bot] monday_mode: 月曜祝日代替 — 起点始値を記録'
+          file_pattern: 'monday_open_prices.json'
+
+# ════════════════════════════════════════════════════════════════════
+# JOB 5: 手動 friday_mode（金曜祝日の代替実行）
+# ════════════════════════════════════════════════════════════════════
+  friday_mode:
+    name: '🏁 週次総括【手動】金曜祝日代替 (friday_mode)'
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'friday_mode'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 依存パッケージをインストール
+        run: |
+          pip install --upgrade pip
+          pip install yfinance pandas numpy joblib requests jpholiday
+
+      - name: 週次総括を Discord に通知（2重実行防止付き）
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python notify_discord.py friday_mode
+
+      - name: 累計勝率ファイルをコミット・プッシュ
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: '[bot] friday_mode: 金曜祝日代替 — 週次総括を更新'
+          file_pattern: 'cumulative_stats.json'
