@@ -1,19 +1,30 @@
 # .github/workflows/trader_notify.yml
 #
-# ─── スケジュール一覧（JST = UTC+9）─────────────────────────────────
+# ─── スケジュール一覧（JST = UTC+9）────────────────────────────────
 #   土曜 07:30 JST (金 22:30 UTC)  → 銘柄予測 (saturday)
 #   月〜木 16:30 JST (07:30 UTC)   → 日次変動 (weekday) ※祝日は自動スキップ
 #   金曜 16:30 JST (07:30 UTC)     → 週次総括 (friday)  ※祝日は自動スキップ
 #
-# ─── 手動実行 (workflow_dispatch) ────────────────────────────────────
+# ─── 手動実行 (workflow_dispatch) ───────────────────────────────────
 #   monday_mode  月曜が祝日のとき翌営業日に手動実行 → 起点始値を記録
 #   friday_mode  金曜が祝日のとき前営業日に手動実行 → 週次総括（2重実行防止付き）
 #
-# ─── 必要な GitHub 設定 ──────────────────────────────────────────────
+# ─── 必要な GitHub 設定 ─────────────────────────────────────────────
 #   Secrets:  DISCORD_WEBHOOK_URL
 #   Settings → Actions → General → Workflow permissions: Read and write ✅
+#
+# ─── v6.0-5d / 修正済み ──────────────────────────────────────────────
+#   ・cache: 'pip' 除去（requirements.txt 不要になった）
+#   ・FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true 追加（Node.js 20 非推奨対応）
+#   ・actions を最新パッチバージョンに固定
+#   ・evening モードは評価 + ケリー統計更新のみ（微調整なし）
+#   ・3シードアンサンブル対応（morning が自動で全シードをロード）
 
 name: Trader Notify
+
+# Node.js 24 を明示的に使用（Node.js 20 非推奨警告を解消）
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 on:
   schedule:
@@ -41,8 +52,12 @@ on:
           - monday_mode
           - friday_mode
 
+# ═══════════════════════════════════════════════════════════════════
+# 共通の Python セットアップアクション（再利用）
+# ═══════════════════════════════════════════════════════════════════
+
 # ════════════════════════════════════════════════════════════════════
-# JOB 1: 土曜日 OR 手動 saturday
+# JOB 1: 土曜日 OR 手動 saturday — 銘柄予測通知
 # ════════════════════════════════════════════════════════════════════
 jobs:
   saturday_predict:
@@ -53,23 +68,23 @@ jobs:
       (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'saturday')
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
         with:
           lfs: true
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5.6.0
         with:
           python-version: '3.11'
-          cache: 'pip'
 
       - name: 依存パッケージをインストール
         run: |
           pip install --upgrade pip
-          pip install tensorflow==2.16.1 yfinance pandas numpy \
+          pip install tensorflow yfinance pandas numpy \
                       scikit-learn joblib ta requests jpholiday
 
-      - name: morning_predict を実行
-        run: python robust_deep_trader_ai_v4r_5d.py morning --top_n 5
+      # morning_predict が全シードモデルを自動検出してアンサンブル予測を実行
+      - name: morning_predict を実行（全シードアンサンブル）
+        run: python robust_deep_trader_ai_v6_0_5d.py morning --top_n 5
 
       - name: Discord に予測結果を通知
         env:
@@ -77,13 +92,13 @@ jobs:
         run: python notify_discord.py saturday
 
       - name: 予測ファイルをコミット・プッシュ
-        uses: stefanzweifel/git-auto-commit-action@v5
+        uses: stefanzweifel/git-auto-commit-action@v5.0.1
         with:
-          commit_message: '[bot] 土曜日: 予測結果を更新'
+          commit_message: '[bot] 土曜日: 予測結果を更新 (v6.0-5d)'
           file_pattern: 'latest_predictions_5d.pkl'
 
 # ════════════════════════════════════════════════════════════════════
-# JOB 2: 月〜木スケジュール OR 手動 weekday
+# JOB 2: 月〜木スケジュール OR 手動 weekday — 日次変動追跡
 # ════════════════════════════════════════════════════════════════════
   weekday_notify:
     name: '📈 日次変動 (weekday)'
@@ -93,14 +108,13 @@ jobs:
       (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'weekday')
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
         with:
           lfs: true
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5.6.0
         with:
           python-version: '3.11'
-          cache: 'pip'
 
       - name: 依存パッケージをインストール
         run: |
@@ -114,13 +128,13 @@ jobs:
 
       # 月曜日のときのみ monday_open_prices.json が更新される
       - name: 起点価格ファイルをコミット・プッシュ
-        uses: stefanzweifel/git-auto-commit-action@v5
+        uses: stefanzweifel/git-auto-commit-action@v5.0.1
         with:
           commit_message: '[bot] 月〜木: 日次追跡データを更新'
           file_pattern: 'monday_open_prices.json'
 
 # ════════════════════════════════════════════════════════════════════
-# JOB 3: 金曜スケジュール OR 手動 friday
+# JOB 3: 金曜スケジュール OR 手動 friday — 週次総括
 # ════════════════════════════════════════════════════════════════════
   friday_summary:
     name: '🏁 週次総括 (friday)'
@@ -130,14 +144,13 @@ jobs:
       (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'friday')
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
         with:
           lfs: true
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5.6.0
         with:
           python-version: '3.11'
-          cache: 'pip'
 
       - name: 依存パッケージをインストール
         run: |
@@ -149,11 +162,18 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: python notify_discord.py friday
 
-      - name: 累計勝率ファイルをコミット・プッシュ
-        uses: stefanzweifel/git-auto-commit-action@v5
+      # evening は評価 + ケリー統計更新のみ（モデル微調整なし）
+      - name: evening_evaluate を実行（評価・ケリー統計更新）
+        run: python robust_deep_trader_ai_v6_0_5d.py evening
+
+      - name: 累計勝率・ケリー統計をコミット・プッシュ
+        uses: stefanzweifel/git-auto-commit-action@v5.0.1
         with:
-          commit_message: '[bot] 金曜日: 週次総括・累計勝率を更新'
-          file_pattern: 'cumulative_stats.json monday_open_prices.json'
+          commit_message: '[bot] 金曜日: 週次総括・累計勝率・ケリー統計を更新'
+          file_pattern: >
+            cumulative_stats.json
+            monday_open_prices.json
+            kelly_stats_v6.json
 
 # ════════════════════════════════════════════════════════════════════
 # JOB 4: 手動 monday_mode（月曜祝日の代替実行）
@@ -165,14 +185,13 @@ jobs:
       github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'monday_mode'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
         with:
           lfs: true
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5.6.0
         with:
           python-version: '3.11'
-          cache: 'pip'
 
       - name: 依存パッケージをインストール
         run: |
@@ -185,7 +204,7 @@ jobs:
         run: python notify_discord.py monday_mode
 
       - name: 起点価格ファイルをコミット・プッシュ
-        uses: stefanzweifel/git-auto-commit-action@v5
+        uses: stefanzweifel/git-auto-commit-action@v5.0.1
         with:
           commit_message: '[bot] monday_mode: 月曜祝日代替 — 起点始値を記録'
           file_pattern: 'monday_open_prices.json'
@@ -200,14 +219,13 @@ jobs:
       github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'friday_mode'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
         with:
           lfs: true
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5.6.0
         with:
           python-version: '3.11'
-          cache: 'pip'
 
       - name: 依存パッケージをインストール
         run: |
@@ -219,8 +237,13 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: python notify_discord.py friday_mode
 
-      - name: 累計勝率ファイルをコミット・プッシュ
-        uses: stefanzweifel/git-auto-commit-action@v5
+      - name: evening_evaluate を実行（評価・ケリー統計更新）
+        run: python robust_deep_trader_ai_v6_0_5d.py evening
+
+      - name: 累計勝率・ケリー統計をコミット・プッシュ
+        uses: stefanzweifel/git-auto-commit-action@v5.0.1
         with:
-          commit_message: '[bot] friday_mode: 金曜祝日代替 — 週次総括を更新'
-          file_pattern: 'cumulative_stats.json'
+          commit_message: '[bot] friday_mode: 金曜祝日代替 — 週次総括・ケリー統計を更新'
+          file_pattern: >
+            cumulative_stats.json
+            kelly_stats_v6.json
