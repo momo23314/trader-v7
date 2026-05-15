@@ -1,0 +1,17 @@
+{
+  "total_trades": 5,
+  "wins": 2,
+  "losses": 3,
+  "total_profit_pct": -1.7665281005754312,
+  "history": [
+    {
+      "date": "2026-05-15",
+      "trades": 5,
+      "wins": 2,
+      "win_rate": 0.4,
+      "avg_ret": -1.7665,
+      "pf": 0.5237
+    }
+  ],
+  "last_friday_run": "2026-05-15"
+}
