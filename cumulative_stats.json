@@ -1,8 +1,8 @@
 {
-  "total_trades": 25,
-  "wins": 9,
-  "losses": 16,
-  "total_profit_pct": -1.6859201929773553,
+  "total_trades": 30,
+  "wins": 13,
+  "losses": 17,
+  "total_profit_pct": 8.479752970449827,
   "history": [
     {
       "date": "2026-05-15",
@@ -43,7 +43,15 @@
       "win_rate": 0.4,
       "avg_ret": 0.4382,
       "pf": 1.6269
+    },
+    {
+      "date": "2026-06-19",
+      "trades": 5,
+      "wins": 4,
+      "win_rate": 0.8,
+      "avg_ret": 10.1657,
+      "pf": 198.4138
     }
   ],
-  "last_friday_run": "2026-06-12"
+  "last_friday_run": "2026-06-19"
 }
